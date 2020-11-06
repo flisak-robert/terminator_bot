@@ -6,6 +6,9 @@ import requests
 import re
 from bs4 import BeautifulSoup
 import sys
+from binascii import a2b_base64
+#pip3 install git+https://github.com/codevance/python-deathbycaptcha.git
+import deathbycaptcha
 
 headers = {
     'User-Agent': 'Mozilla/5.0 (Macintoshf  Mac OS X 10_12_6) AppeWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.78 Safari/537.36',
@@ -15,6 +18,9 @@ headers = {
 #Create an empty list to store all available dates 
 all_available_dates=[]
 
+#Credentials for DeathByCaptcha
+deathbycaptcha_username = 'DEATHBYCAPTCHA USER NAME HERE'
+deathbycaptcha_password = 'DEATHBYCAPTCHA PASSWORD HERE'
 
 #The bot is using callbacks from the user to perform some actions. It works with inline keyboard buttons.
 # To successfully capture state and handle callback data, the variables are declared here.
@@ -119,31 +125,92 @@ def appointment_choice(update, context):
     print(url_date)
     r = session.get(url_date)
     
-    #See where the bot is, probably stuck on fucking captcha
-    print(r.url)
-    
-    
-    #Code below is meant to find the exact hour of the appointments along with the burgeramt location however it won't work for now because captcha...
+    #See where the bot is, probably stuck on captcha
+    captcha_detected = r.url
+    print(captcha_detected)
     parseData = BeautifulSoup(r.text, 'html.parser')
-    available_hours = parseData.findAll('th', {'class': 'buchbar'})
-    available_locations = parseData.findAll('td', {'class': 'frei'})
-    is_error = parseData.findAll('div', {'class': 'alert alert-error noprint textile'})
-    errors=[]
-    for element in is_error:
-        error_msg = element.text.strip()
-        errors.append(error_msg)
-    print(errors)
-    hours = []
-    locations = []
-    for h in available_hours:
-        hour = h.text.strip()
-        hours.append(hour)
-    print(hours)
-    for l in available_locations:
-        location = l.text.strip()
-        locations.append(location)
-    print(locations)
-    return FIRST
+    if captcha_detected == 'https://service.berlin.de/terminvereinbarung/termin/human/':
+        print('Captcha verification... please wait')
+        captcha_container = parseData.find('form', {'action': '/terminvereinbarung/termin/human/'})
+        captcha_image = captcha_container.find('img')
+        captcha_image_url = captcha_image['src']
+        #The URL looks like this: 'data:image/png;base64,iVBORw0KG...', base64 string is needed to generate the captcha image
+        #Using string.partition() you put the string as function argument and then use the index [2] to get the remainder of the string
+        #This array has 3 indexes (0,1,2):
+        #0 - string that comes before the string from the input (in this case - its an empty string because data:image/png;base64 is the beginning of the string)
+        #1 - is the string from the input
+        #2 - what comes after the string from the input
+        base64_from_url = captcha_image_url.partition("data:image/png;base64,")[2]
+        
+        #Generate a dynamic filename using base64 characters. First, get 10 characters, and then remove all the special characters,
+        #since base64 can contain slashes and plus signs whcih could potentially be problematic as a filename
+        base64_first_ten_chars = base64_from_url[0:10]
+        captcha_filename = ''.join(e for e in base64_first_ten_chars if e.isalnum()) + '.png'
+
+        #Save the image
+        binary_data = a2b_base64(base64_from_url)
+        fd = open(captcha_filename, 'wb')
+        fd.write(binary_data)
+        fd.close()
+
+        #Send the image to DeathByCaptcha
+        deathbycaptcha_timeout = 30 #30 second timeout for captcha solving, can be adjusted if it is too short
+        deathbycaptcha_client = deathbycaptcha.SocketClient(deathbycaptcha_username, deathbycaptcha_password)
+        try:
+            captcha_to_resolve = deathbycaptcha_client.decode(captcha_filename, deathbycaptcha_timeout)
+            if captcha_to_resolve:
+                print("CAPTCHA %s solved: %s" % (captcha_to_resolve["captcha"], captcha_to_resolve["text"]))
+                resolved_captcha = captcha_to_resolve["text"]
+        except deathbycaptcha.AccessDeniedException:
+            print('DeathByCaptcha Access DENIED')
+
+        #The captcha form is a GET form so we need to modify the URL here with the right text
+        #Example:
+        #https://service.berlin.de/terminvereinbarung/termin/human/?captcha_text=hMddiv       
+        captcha_getform_url = captcha_detected + '?captcha_text=' + resolved_captcha
+        print(captcha_getform_url)
+        r = session.get(captcha_getform_url)
+        #Debug msg: CHECK CURRENT URL
+        print(r.url)
+        #For some reason it is redirecting to https://service.berlin.de/terminvereinbarung/termin/time/ and I believe this is
+        #not the correct url and the date of the appointment scrapped from this URL is a default date (year 1970)
+        #We need to recreate the session with the URL with endpoint, the one just before captcha redirect (variable: url_date)
+        
+        #Debug: See if the date is correct
+        r = session.get(url_date)
+        parseData = BeautifulSoup(r.text, 'html.parser')
+        print(r.url)
+        date_check = parseData.findAll('div', {'class': 'table-cell collapsible-description span7'})
+        print(date_check)
+        #The date is correct here so we are on the right page
+
+        ##TO DO:
+        # --- Get the hours of the appointment along with the burgeramt locations and display the buttons to the user
+        # --- Create good callbacks to handle everything correctly in the next function
+
+    else:
+    #Code below is meant to find the exact hour of the appointments along with the burgeramt location however it won't work for now because captcha...
+        print('NO captcha verification, yaaay!')
+        parseData = BeautifulSoup(r.text, 'html.parser')
+        available_hours = parseData.findAll('th', {'class': 'buchbar'})
+        available_locations = parseData.findAll('td', {'class': 'frei'})
+        is_error = parseData.findAll('div', {'class': 'alert alert-error noprint textile'})
+        errors=[]
+        for element in is_error:
+            error_msg = element.text.strip()
+            errors.append(error_msg)
+        print(errors)
+        hours = []
+        locations = []
+        for h in available_hours:
+            hour = h.text.strip()
+            hours.append(hour)
+        print(hours)
+        for l in available_locations:
+            location = l.text.strip()
+            locations.append(location)
+        print(locations)
+        return FIRST
 
 
 #Needed to allow the bot to work when user types in the /start function without sending any callback data (so, without clicking a button)
