@@ -53,7 +53,6 @@ def anmelden(update, context):
     url = 'https://service.berlin.de/dienstleistung/120686/'
     data = session.get(url)
     soup = BeautifulSoup(data.text, 'html.parser')
-    products = soup.findAll('div', {'class': 'zmstermin-multi inner'})
     
     #Look for "Termin berlinweit suchen" button (url)
     products = soup.findAll('div', {'class': 'zmstermin-multi inner'})
