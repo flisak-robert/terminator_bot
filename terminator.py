@@ -13,15 +13,9 @@ from itertools import  cycle
 import tempfile
 import datetime
 
-#Create an empty list to store all available dates 
-all_available_dates=[]
-
-#Create an empty dictionary to store all hours/locations values
-appointments_dictionary = {}
-
 #Credentials for DeathByCaptcha
-deathbycaptcha_username = '<USERNAME HERE>'
-deathbycaptcha_password = '<PASSWORD HERE>'
+deathbycaptcha_username = '<USERNAME>'
+deathbycaptcha_password = '<PASSWORD'
 
 #The bot is using callbacks from the user to perform some actions. It works with inline keyboard buttons.
 #To successfully capture state and handle callback data, state variables are declared here.
@@ -29,9 +23,6 @@ deathbycaptcha_password = '<PASSWORD HERE>'
 FIRST, SECOND,THIRD,FOURTH,FIFTH,POST_INFORMATION = range(6)
 #Callback data
 ONE, TWO, THREE, FOUR = range(4)
-
-#Create a global session to the anmeldung website
-session = requests.Session()
 
 #Start function defines bot behaviour when user types the /start command, 1 button menu is generated and callback data is collected for each click
 def start(update, context):
@@ -46,13 +37,19 @@ def start(update, context):
 
 #Define anmelden function that takes care of navigating to the page with calendars and finding available appointments
 def anmelden(update, context):
-    global all_available_dates
-    global session
-    update.callback_query.edit_message_text(text="Searching for available appointments...")
     
+    #Create a session and store it in context for the specific user
+    session = requests.Session()
+    context.user_data['session'] = session
+    
+    #Create a list for storing all available appointment dates
+    all_available_dates = []
+
+    update.callback_query.edit_message_text(text="Searching for available appointments...")  
     url = 'https://service.berlin.de/dienstleistung/120686/'
     data = session.get(url)
     soup = BeautifulSoup(data.text, 'html.parser')
+    products = soup.findAll('div', {'class': 'zmstermin-multi inner'})
     
     #Look for "Termin berlinweit suchen" button (url)
     products = soup.findAll('div', {'class': 'zmstermin-multi inner'})
@@ -66,6 +63,8 @@ def anmelden(update, context):
     #Tough to say what could be done to prevent these situations, it usually fixes on a retry (typing /start again).
     findDates = parseData.findAll('td', {'class': 'buchbar'})
     if len(findDates) == 0:
+        print(data.url)
+        print(r.url)
         sorryMsg = 'Sorry, but there are no available dates.\n Type /start command again to retry.'
         update.callback_query.message.reply_text(sorryMsg)
         return SECOND
@@ -111,14 +110,16 @@ def anmelden(update, context):
         #Debug msg
         print(all_available_dates)
         print(len(all_available_dates))
-
+        context.user_data['all_available_dates'] = all_available_dates
         return FIRST
 
 def appointment_choice(update, context):
-    global all_available_dates
-    global session
-    global appointments_dictionary
+    #read session variable value from context
+    session = context.user_data['session']
     
+    #create an  empty appointment dictionary to store hours and locations
+    appointments_dictionary = {}
+    all_available_dates = context.user_data['all_available_dates']
     query = update.callback_query
     query.answer()
     
@@ -284,12 +285,14 @@ def appointment_choice(update, context):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     query.edit_message_text(text="Please choose the time  of the appointment:", reply_markup=reply_markup)
+    context.user_data['appointments_dictionary'] = appointments_dictionary
 
     return FIRST
 
 def location_choice(update, context):
-    global session
-    global appointments_dictionary
+    #Read session value and dictionary from context
+    session = context.user_data['session']
+    appointments_dictionary = context.user_data['appointments_dictionary']
     query = update.callback_query
     query.answer()
     query.edit_message_text(text='Selected option: {}'.format(query.data))
@@ -327,7 +330,8 @@ def location_choice(update, context):
     return FIRST
 
 def book_appointment(update,context):
-    global session
+    #read session from context
+    session = context.user_data['session']
     query = update.callback_query
     query.answer()
     
@@ -383,7 +387,8 @@ def get_user_phone(update,context):
     return POST_INFORMATION
 
 def submit_data(update,context):
-    global session
+    #read session from  context
+    session = context.user_data['session']
     user_data = context.user_data
     query = update.callback_query
     query.answer()
@@ -440,7 +445,7 @@ def end(update, context):
     return ConversationHandler.END
 
 def main():
-    updater = Updater('<BOT TOKEN HERE>', use_context=True)
+    updater = Updater('<BOT TOKEN>', use_context=True)
     dp = updater.dispatcher
     
     #Use ConversationHandler to handle conversation state based on the callback data received
